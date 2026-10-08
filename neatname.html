@@ -25,8 +25,9 @@ button { background: var(--accent); color: white; border: none; padding: 10px 20
 button:hover { opacity: 0.9; }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 button.secondary { background: #444; }
-.drop { border: 2px dashed #555; border-radius: 12px; padding: 30px; text-align: center; color: var(--muted); cursor: pointer; margin-bottom: 16px; }
-.drop:hover { border-color: var(--accent); }
+.drop { border: 2px dashed #555; border-radius: 12px; padding: 40px 30px; text-align: center; color: var(--muted); cursor: pointer; margin-bottom: 16px; transition: border-color 0.2s; }
+.drop:hover, .drop.over { border-color: var(--accent); }
+.drop.over { background: rgba(233,69,96,0.05); }
 table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
 th { text-align: left; padding: 8px; color: var(--muted); border-bottom: 1px solid #444; font-weight: normal; }
 td { padding: 8px; border-bottom: 1px solid #333; word-break: break-all; }
@@ -39,19 +40,20 @@ tr.unchanged td.new { color: var(--muted); }
 .stats b { color: var(--text); }
 .hidden { display: none; }
 .note { font-size: 0.85em; color: var(--muted); margin-top: 8px; }
+#fileInput { display: none; }
 </style>
 </head>
 <body>
 <div class="wrap">
 <header>
 <h1>Neatname</h1>
-<p>Batch rename files. Preview first, undo anytime.</p>
+<p>Batch rename files. No install, no permissions, no uploads.</p>
 </header>
 
 <div class="card" id="pickCard">
-<h2>1. Pick a folder</h2>
-<div class="drop" id="dropZone">Click to choose a folder<br><span style="font-size:0.8em">Files stay on your computer. Nothing is uploaded.</span></div>
-<p class="note" id="supportNote"></p>
+<h2>1. Drop your files</h2>
+<div class="drop" id="dropZone">Drag files here or click to browse<br><span style="font-size:0.8em">Files stay in your browser. Nothing is uploaded anywhere.</span></div>
+<input type="file" id="fileInput" multiple>
 </div>
 
 <div class="card hidden" id="rulesCard">
@@ -98,42 +100,33 @@ tr.unchanged td.new { color: var(--muted); }
 <tbody id="fileList"></tbody></table>
 </div>
 <div class="row" style="margin-top:16px">
-<button id="applyBtn" disabled>Rename files</button>
-<button class="secondary" id="undoBtn" disabled>Undo last rename</button>
-<button class="secondary" id="resetBtn">Pick another folder</button>
+<button id="downloadBtn" disabled>Download renamed files</button>
+<button class="secondary" id="clearBtn">Clear all</button>
 </div>
-<p class="note">Conflicts are highlighted. Uncheck files to skip them.</p>
+<p class="note">Downloads each file with its new name. Your originals are untouched.</p>
 </div>
 </div>
 
 <script>
 'use strict';
-let dirHandle = null, files = [], undoStack = [];
+let files = [];
 
-/* ---------- support check ---------- */
-if (!('showDirectoryPicker' in window)) {
-  document.getElementById('supportNote').textContent =
-    'Your browser does not support direct folder access. Use Chrome or Edge on desktop.';
-  document.getElementById('dropZone').style.opacity = '0.4';
-  document.getElementById('dropZone').style.pointerEvents = 'none';
-}
+/* ---------- file input ---------- */
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => addFiles(fileInput.files));
+['dragover', 'dragenter'].forEach(ev => dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.remove('over'); }));
+dropZone.addEventListener('drop', e => addFiles(e.dataTransfer.files));
 
-/* ---------- folder pick ---------- */
-document.getElementById('dropZone').addEventListener('click', async () => {
-  try {
-    dirHandle = await window.showDirectoryPicker();
-    await scanFiles();
+function addFiles(list) {
+  for (const f of list) files.push({ file: f, name: f.name, selected: true, newName: '' });
+  files.sort((a, b) => a.name.localeCompare(b.name));
+  if (files.length) {
     document.getElementById('rulesCard').classList.remove('hidden');
     document.getElementById('previewCard').classList.remove('hidden');
-  } catch (e) { /* user cancelled */ }
-});
-
-async function scanFiles() {
-  files = [];
-  for await (const entry of dirHandle.values()) {
-    if (entry.kind === 'file') files.push({ handle: entry, name: entry.name, selected: true, newName: '' });
   }
-  files.sort((a, b) => a.name.localeCompare(b.name));
   updatePreview();
 }
 
@@ -144,9 +137,7 @@ function applyCase(s, mode) {
   if (mode === 'title') return s.replace(/\w\S*/g, t => t[0].toUpperCase() + t.slice(1).toLowerCase());
   return s;
 }
-function cleanSp(s) {
-  return s.replace(/\s+/g, ' ').trim().replace(/ /g, '_');
-}
+function cleanSp(s) { return s.replace(/\s+/g, ' ').trim().replace(/ /g, '_'); }
 function splitName(full) {
   const i = full.lastIndexOf('.');
   return i > 0 ? [full.slice(0, i), full.slice(i)] : [full, ''];
@@ -158,7 +149,6 @@ function computeNewName(file, idx) {
   const doClean = document.getElementById('cleanSpaces').checked;
   const doNum = document.getElementById('numbering').checked;
   let out = stem;
-
   if (mode === 'new') {
     const base = document.getElementById('baseName').value.trim() || 'File';
     const sep = document.getElementById('separator').value;
@@ -180,11 +170,8 @@ function computeNewName(file, idx) {
       out = out + sep + String(start + idx).padStart(pad, '0');
     }
   } else if (mode === 'prefix') {
-    const pre = document.getElementById('prefixText').value;
-    const suf = document.getElementById('suffixText').value;
-    out = pre + out + suf;
+    out = document.getElementById('prefixText').value + out + document.getElementById('suffixText').value;
   }
-
   out = applyCase(out, caseOpt);
   if (doClean) out = cleanSp(out);
   return out + ext;
@@ -195,39 +182,35 @@ function updatePreview() {
   tbody.innerHTML = '';
   const seen = new Map();
   let change = 0, conflicts = 0;
-
   files.forEach((f, i) => {
     f.newName = computeNewName(f, i);
-    const isConflict = f.selected && seen.has(f.newName.toLowerCase()) && f.newName !== f.name;
+    const key = f.newName.toLowerCase();
+    const isConflict = f.selected && seen.has(key) && f.newName !== f.name;
     if (isConflict) conflicts++;
-    if (f.selected && f.newName !== f.name) { change++; seen.set(f.newName.toLowerCase(), 1); }
-    else if (f.selected) seen.set(f.newName.toLowerCase(), 1);
-
+    if (f.selected && f.newName !== f.name) change++;
+    if (f.selected) seen.set(key, 1);
     const tr = document.createElement('tr');
     if (isConflict) tr.className = 'conflict';
     else if (f.newName === f.name) tr.className = 'unchanged';
-    tr.innerHTML =
-      '<td><input type="checkbox" data-i="' + i + '"' + (f.selected ? ' checked' : '') + '></td>' +
+    tr.innerHTML = '<td><input type="checkbox" data-i="' + i + '"' + (f.selected ? ' checked' : '') + '></td>' +
       '<td>' + esc(f.name) + '</td>' +
       '<td class="new">' + esc(f.newName) + (isConflict ? ' (conflict)' : '') + '</td>';
     tbody.appendChild(tr);
   });
-
   tbody.querySelectorAll('input[type=checkbox]').forEach(cb => {
     cb.addEventListener('change', () => { files[+cb.dataset.i].selected = cb.checked; updatePreview(); });
   });
-
   document.getElementById('fileCount').textContent = files.length + ' files';
   document.getElementById('stChange').textContent = change;
   document.getElementById('stSame').textContent = files.filter(f => !f.selected || f.newName === f.name).length;
   const cb = document.getElementById('conflictBadge');
   cb.textContent = conflicts + ' conflicts';
   cb.classList.toggle('hidden', conflicts === 0);
-  document.getElementById('applyBtn').disabled = change === 0 || conflicts > 0;
+  document.getElementById('downloadBtn').disabled = change === 0 || conflicts > 0;
 }
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
-/* ---------- mode switching ---------- */
+/* ---------- UI wiring ---------- */
 document.getElementById('mode').addEventListener('change', e => {
   const m = e.target.value;
   document.getElementById('newOpts').classList.toggle('hidden', m !== 'new' && m !== 'find');
@@ -242,46 +225,25 @@ document.getElementById('selAll').addEventListener('change', e => {
   files.forEach(f => f.selected = e.target.checked);
   updatePreview();
 });
-
-/* ---------- apply & undo ---------- */
-document.getElementById('applyBtn').addEventListener('click', async () => {
-  const toRename = files.filter(f => f.selected && f.newName !== f.name);
-  if (!toRename.length) return;
-  if (!confirm('Rename ' + toRename.length + ' files?')) return;
-  const batch = [];
-  for (const f of toRename) {
-    try {
-      await f.handle.move(f.newName);
-      batch.push({ handle: f.handle, oldName: f.name, newName: f.newName });
-      f.name = f.newName;
-    } catch (e) {
-      alert('Failed to rename "' + f.name + '": ' + e.message);
-      break;
-    }
-  }
-  if (batch.length) { undoStack.push(batch); document.getElementById('undoBtn').disabled = false; }
-  updatePreview();
-});
-
-document.getElementById('undoBtn').addEventListener('click', async () => {
-  const batch = undoStack.pop();
-  if (!batch) return;
-  for (const item of batch) {
-    try {
-      await item.handle.move(item.oldName);
-      const f = files.find(x => x.handle === item.handle);
-      if (f) f.name = item.oldName;
-    } catch (e) { alert('Undo failed for "' + item.newName + '": ' + e.message); }
-  }
-  if (!undoStack.length) document.getElementById('undoBtn').disabled = true;
-  updatePreview();
-});
-
-document.getElementById('resetBtn').addEventListener('click', () => {
-  files = []; undoStack = [];
+document.getElementById('clearBtn').addEventListener('click', () => {
+  files = []; fileInput.value = '';
   document.getElementById('rulesCard').classList.add('hidden');
   document.getElementById('previewCard').classList.add('hidden');
-  document.getElementById('undoBtn').disabled = true;
+});
+
+/* ---------- download renamed copies ---------- */
+document.getElementById('downloadBtn').addEventListener('click', () => {
+  const toDl = files.filter(f => f.selected && f.newName !== f.name);
+  toDl.forEach((f, i) => {
+    setTimeout(() => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(f.file);
+      a.download = f.newName;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    }, i * 300);
+  });
 });
 </script>
 </body>
