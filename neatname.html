@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+<title>Neatname - Batch File Renamer</title>
+<style>
+:root { --bg: #1a1a2e; --card: #252542; --accent: #e94560; --text: #eee; --muted: #888; --ok: #4caf50; --warn: #ff9800; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 20px; }
+.wrap { max-width: 900px; margin: 0 auto; }
+header { text-align: center; margin-bottom: 24px; }
+header h1 { font-size: 2em; color: var(--accent); }
+header p { color: var(--muted); margin-top: 4px; }
+.card { background: var(--card); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+.card h2 { font-size: 1.1em; margin-bottom: 12px; color: var(--accent); }
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
+.field { flex: 1; min-width: 140px; }
+.field label { display: block; font-size: 0.8em; color: var(--muted); margin-bottom: 4px; }
+.field input, .field select { width: 100%; padding: 8px 10px; border: 1px solid #444; border-radius: 6px; background: #1a1a2e; color: var(--text); font-size: 0.95em; }
+.field input[type="checkbox"] { width: auto; }
+.field input[type="number"] { width: 80px; }
+button { background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 8px; font-size: 1em; cursor: pointer; }
+button:hover { opacity: 0.9; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+button.secondary { background: #444; }
+.drop { border: 2px dashed #555; border-radius: 12px; padding: 30px; text-align: center; color: var(--muted); cursor: pointer; margin-bottom: 16px; }
+.drop:hover { border-color: var(--accent); }
+table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+th { text-align: left; padding: 8px; color: var(--muted); border-bottom: 1px solid #444; font-weight: normal; }
+td { padding: 8px; border-bottom: 1px solid #333; word-break: break-all; }
+tr.conflict td.new { color: var(--warn); font-weight: bold; }
+tr.unchanged td.new { color: var(--muted); }
+.new { color: var(--ok); }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75em; background: #444; }
+.badge.warn { background: var(--warn); color: #000; }
+.stats { display: flex; gap: 16px; margin: 12px 0; font-size: 0.9em; color: var(--muted); }
+.stats b { color: var(--text); }
+.hidden { display: none; }
+.note { font-size: 0.85em; color: var(--muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+<h1>Neatname</h1>
+<p>Batch rename files. Preview first, undo anytime.</p>
+</header>
+
+<div class="card" id="pickCard">
+<h2>1. Pick a folder</h2>
+<div class="drop" id="dropZone">Click to choose a folder<br><span style="font-size:0.8em">Files stay on your computer. Nothing is uploaded.</span></div>
+<p class="note" id="supportNote"></p>
+</div>
+
+<div class="card hidden" id="rulesCard">
+<h2>2. Rename rules</h2>
+<div class="row">
+<div class="field"><label>Mode</label><select id="mode">
+<option value="new">New name + numbering</option>
+<option value="find">Find and replace</option>
+<option value="prefix">Add prefix / suffix</option>
+</select></div>
+</div>
+<div class="row" id="newOpts">
+<div class="field"><label>Base name</label><input id="baseName" value="File" placeholder="File"></div>
+<div class="field"><label>Start at</label><input id="startNum" type="number" value="1" min="0"></div>
+<div class="field"><label>Padding</label><input id="padNum" type="number" value="3" min="1" max="6"></div>
+<div class="field"><label>Separator</label><input id="separator" value="_" maxlength="3"></div>
+</div>
+<div class="row hidden" id="findOpts">
+<div class="field"><label>Find</label><input id="findText" placeholder="old text"></div>
+<div class="field"><label>Replace with</label><input id="replaceText" placeholder="new text"></div>
+<div class="field"><label>&nbsp;</label><label><input type="checkbox" id="matchCase"> Match case</label></div>
+</div>
+<div class="row hidden" id="prefixOpts">
+<div class="field"><label>Prefix</label><input id="prefixText" placeholder=""></div>
+<div class="field"><label>Suffix</label><input id="suffixText" placeholder=""></div>
+</div>
+<div class="row">
+<div class="field"><label>Change case</label><select id="caseOpt">
+<option value="keep">Keep as is</option>
+<option value="lower">lowercase</option>
+<option value="upper">UPPERCASE</option>
+<option value="title">Title Case</option>
+</select></div>
+<div class="field"><label>&nbsp;</label><label><input type="checkbox" id="cleanSpaces" checked> Clean up spaces</label></div>
+<div class="field"><label>&nbsp;</label><label><input type="checkbox" id="numbering" checked> Add numbering</label></div>
+</div>
+</div>
+
+<div class="card hidden" id="previewCard">
+<h2>3. Preview <span class="badge" id="fileCount">0 files</span> <span class="badge warn hidden" id="conflictBadge">0 conflicts</span></h2>
+<div class="stats"><span><b id="stChange">0</b> will change</span><span><b id="stSame">0</b> unchanged</span></div>
+<div style="max-height:400px;overflow:auto">
+<table><thead><tr><th><input type="checkbox" id="selAll" checked></th><th>Current name</th><th>New name</th></tr></thead>
+<tbody id="fileList"></tbody></table>
+</div>
+<div class="row" style="margin-top:16px">
+<button id="applyBtn" disabled>Rename files</button>
+<button class="secondary" id="undoBtn" disabled>Undo last rename</button>
+<button class="secondary" id="resetBtn">Pick another folder</button>
+</div>
+<p class="note">Conflicts are highlighted. Uncheck files to skip them.</p>
+</div>
+</div>
+
+<script>
+'use strict';
+let dirHandle = null, files = [], undoStack = [];
+
+/* ---------- support check ---------- */
+if (!('showDirectoryPicker' in window)) {
+  document.getElementById('supportNote').textContent =
+    'Your browser does not support direct folder access. Use Chrome or Edge on desktop.';
+  document.getElementById('dropZone').style.opacity = '0.4';
+  document.getElementById('dropZone').style.pointerEvents = 'none';
+}
+
+/* ---------- folder pick ---------- */
+document.getElementById('dropZone').addEventListener('click', async () => {
+  try {
+    dirHandle = await window.showDirectoryPicker();
+    await scanFiles();
+    document.getElementById('rulesCard').classList.remove('hidden');
+    document.getElementById('previewCard').classList.remove('hidden');
+  } catch (e) { /* user cancelled */ }
+});
+
+async function scanFiles() {
+  files = [];
+  for await (const entry of dirHandle.values()) {
+    if (entry.kind === 'file') files.push({ handle: entry, name: entry.name, selected: true, newName: '' });
+  }
+  files.sort((a, b) => a.name.localeCompare(b.name));
+  updatePreview();
+}
+
+/* ---------- rename logic ---------- */
+function applyCase(s, mode) {
+  if (mode === 'lower') return s.toLowerCase();
+  if (mode === 'upper') return s.toUpperCase();
+  if (mode === 'title') return s.replace(/\w\S*/g, t => t[0].toUpperCase() + t.slice(1).toLowerCase());
+  return s;
+}
+function cleanSp(s) {
+  return s.replace(/\s+/g, ' ').trim().replace(/ /g, '_');
+}
+function splitName(full) {
+  const i = full.lastIndexOf('.');
+  return i > 0 ? [full.slice(0, i), full.slice(i)] : [full, ''];
+}
+function computeNewName(file, idx) {
+  const [stem, ext] = splitName(file.name);
+  const mode = document.getElementById('mode').value;
+  const caseOpt = document.getElementById('caseOpt').value;
+  const doClean = document.getElementById('cleanSpaces').checked;
+  const doNum = document.getElementById('numbering').checked;
+  let out = stem;
+
+  if (mode === 'new') {
+    const base = document.getElementById('baseName').value.trim() || 'File';
+    const sep = document.getElementById('separator').value;
+    const start = parseInt(document.getElementById('startNum').value) || 1;
+    const pad = parseInt(document.getElementById('padNum').value) || 3;
+    out = doNum ? base + sep + String(start + idx).padStart(pad, '0') : base;
+  } else if (mode === 'find') {
+    const find = document.getElementById('findText').value;
+    const rep = document.getElementById('replaceText').value;
+    if (find) {
+      out = document.getElementById('matchCase').checked
+        ? out.split(find).join(rep)
+        : out.replace(new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), rep);
+    }
+    if (doNum) {
+      const start = parseInt(document.getElementById('startNum').value) || 1;
+      const pad = parseInt(document.getElementById('padNum').value) || 3;
+      const sep = document.getElementById('separator').value;
+      out = out + sep + String(start + idx).padStart(pad, '0');
+    }
+  } else if (mode === 'prefix') {
+    const pre = document.getElementById('prefixText').value;
+    const suf = document.getElementById('suffixText').value;
+    out = pre + out + suf;
+  }
+
+  out = applyCase(out, caseOpt);
+  if (doClean) out = cleanSp(out);
+  return out + ext;
+}
+
+function updatePreview() {
+  const tbody = document.getElementById('fileList');
+  tbody.innerHTML = '';
+  const seen = new Map();
+  let change = 0, conflicts = 0;
+
+  files.forEach((f, i) => {
+    f.newName = computeNewName(f, i);
+    const isConflict = f.selected && seen.has(f.newName.toLowerCase()) && f.newName !== f.name;
+    if (isConflict) conflicts++;
+    if (f.selected && f.newName !== f.name) { change++; seen.set(f.newName.toLowerCase(), 1); }
+    else if (f.selected) seen.set(f.newName.toLowerCase(), 1);
+
+    const tr = document.createElement('tr');
+    if (isConflict) tr.className = 'conflict';
+    else if (f.newName === f.name) tr.className = 'unchanged';
+    tr.innerHTML =
+      '<td><input type="checkbox" data-i="' + i + '"' + (f.selected ? ' checked' : '') + '></td>' +
+      '<td>' + esc(f.name) + '</td>' +
+      '<td class="new">' + esc(f.newName) + (isConflict ? ' (conflict)' : '') + '</td>';
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.addEventListener('change', () => { files[+cb.dataset.i].selected = cb.checked; updatePreview(); });
+  });
+
+  document.getElementById('fileCount').textContent = files.length + ' files';
+  document.getElementById('stChange').textContent = change;
+  document.getElementById('stSame').textContent = files.filter(f => !f.selected || f.newName === f.name).length;
+  const cb = document.getElementById('conflictBadge');
+  cb.textContent = conflicts + ' conflicts';
+  cb.classList.toggle('hidden', conflicts === 0);
+  document.getElementById('applyBtn').disabled = change === 0 || conflicts > 0;
+}
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+/* ---------- mode switching ---------- */
+document.getElementById('mode').addEventListener('change', e => {
+  const m = e.target.value;
+  document.getElementById('newOpts').classList.toggle('hidden', m !== 'new' && m !== 'find');
+  document.getElementById('findOpts').classList.toggle('hidden', m !== 'find');
+  document.getElementById('prefixOpts').classList.toggle('hidden', m !== 'prefix');
+  if (files.length) updatePreview();
+});
+document.querySelectorAll('#rulesCard input, #rulesCard select').forEach(el => {
+  el.addEventListener('input', () => { if (files.length) updatePreview(); });
+});
+document.getElementById('selAll').addEventListener('change', e => {
+  files.forEach(f => f.selected = e.target.checked);
+  updatePreview();
+});
+
+/* ---------- apply & undo ---------- */
+document.getElementById('applyBtn').addEventListener('click', async () => {
+  const toRename = files.filter(f => f.selected && f.newName !== f.name);
+  if (!toRename.length) return;
+  if (!confirm('Rename ' + toRename.length + ' files?')) return;
+  const batch = [];
+  for (const f of toRename) {
+    try {
+      await f.handle.move(f.newName);
+      batch.push({ handle: f.handle, oldName: f.name, newName: f.newName });
+      f.name = f.newName;
+    } catch (e) {
+      alert('Failed to rename "' + f.name + '": ' + e.message);
+      break;
+    }
+  }
+  if (batch.length) { undoStack.push(batch); document.getElementById('undoBtn').disabled = false; }
+  updatePreview();
+});
+
+document.getElementById('undoBtn').addEventListener('click', async () => {
+  const batch = undoStack.pop();
+  if (!batch) return;
+  for (const item of batch) {
+    try {
+      await item.handle.move(item.oldName);
+      const f = files.find(x => x.handle === item.handle);
+      if (f) f.name = item.oldName;
+    } catch (e) { alert('Undo failed for "' + item.newName + '": ' + e.message); }
+  }
+  if (!undoStack.length) document.getElementById('undoBtn').disabled = true;
+  updatePreview();
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  files = []; undoStack = [];
+  document.getElementById('rulesCard').classList.add('hidden');
+  document.getElementById('previewCard').classList.add('hidden');
+  document.getElementById('undoBtn').disabled = true;
+});
+</script>
+</body>
+</html>
